@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <title>高速 QR Code 掃描器</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/dist/html5-qrcode.min.js" type="text/javascript"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', Roboto, sans-serif;
+      padding: 1em;
+      margin: 0;
+      background: #f5f5f5;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    h1 {
+      font-size: 1.5em;
+      text-align: center;
+      color: #333;
+      margin-bottom: 0.5em;
+    }
+
+    button {
+      padding: 10px 20px;
+      margin: 5px;
+      font-size: 1.1em;
+      border-radius: 8px;
+      border: none;
+      background-color: #007bff;
+      color: white;
+      cursor: pointer;
+      transition: background-color 0.2s;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+
+    button:hover {
+      background-color: #0069d9;
+    }
+
+    button:active {
+      transform: scale(0.98);
+    }
+
+    #reader {
+      width: 100%;
+      max-width: 400px;
+      margin: 1em auto;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      transform: translateZ(0);
+      backface-visibility: hidden;
+    }
+
+    ul {
+      list-style-type: none;
+      padding: 0;
+      max-height: 300px;
+      overflow-y: auto;
+      margin: 1em 0;
+      border-radius: 8px;
+      background: white;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    li {
+      background: #fff;
+      margin: 0;
+      padding: 12px 16px;
+      border-bottom: 1px solid #eee;
+      font-size: 0.95em;
+      transition: background 0.2s;
+    }
+
+    li:last-child {
+      border-bottom: none;
+    }
+
+    li:hover {
+      background: #f8f9fa;
+    }
+
+    .btn-group {
+      text-align: center;
+      margin-bottom: 1em;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    #scan-status {
+      text-align: center;
+      color: #666;
+      font-size: 0.9em;
+      margin: 0.5em 0;
+    }
+
+    @media (max-width: 480px) {
+      .btn-group {
+        flex-direction: column;
+        align-items: center;
+      }
+      
+      button {
+        width: 90%;
+        margin: 3px 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>高速 QR Code 掃描器</h1>
+
+  <div class="btn-group">
+    <button onclick="startScan()">▶️ 開始掃描</button>
+    <button onclick="stopScan()">⏹️ 停止掃描</button>
+    <button onclick="downloadCSV()">📥 下載 CSV</button>
+    <button onclick="clearData()">🗑️ 清除紀錄</button>
+  </div>
+
+  <div id="scan-status">準備掃描...</div>
+  <div id="reader"></div>
+
+  <h3>掃描結果：</h3>
+  <ul id="result-list"></ul>
+
+  <script>
+    const scannedData = new Map();
+    let html5QrCode;
+    let scanActive = false;
+    let debounceTimer;
+
+    // 防抖函數 (防止重複掃描)
+    function debounce(func, delay) {
+      return function() {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          func.apply(this, arguments);
+        }, delay);
+      };
+    }
+
+    // 從本地存儲加載數據
+    function loadFromStorage() {
+      try {
+        const stored = JSON.parse(localStorage.getItem("bnData") || "[]");
+        stored.forEach(({ bn, time }) => {
+          if (!scannedData.has(bn)) {
+            scannedData.set(bn, time);
+            appendToList(bn, time);
+          }
+        });
+      } catch (e) {
+        console.error("讀取存儲數據失敗:", e);
+      }
+    }
+
+    // 保存數據到本地存儲 (使用防抖)
+    const saveToStorage = debounce(function() {
+      const data = Array.from(scannedData.entries()).map(([bn, time]) => ({ bn, time }));
+      try {
+        localStorage.setItem("bnData", JSON.stringify(data));
+      } catch (e) {
+        console.error("存儲數據失敗:", e);
+      }
+    }, 500);
+
+    // 添加結果到列表
+    function appendToList(bn, time) {
+      const list = document.getElementById("result-list");
+      const item = document.createElement("li");
+      item.textContent = `${bn} - ${time}`;
+      list.insertBefore(item, list.firstChild); // 新結果添加到頂部
+    }
+
+    // 掃描成功回調 (優化版)
+    const onScanSuccess = debounce(function(qrMessage) {
+      try {
+        const url = new URL(qrMessage);
+        const bnValue = url.searchParams.get("bn");
+
+        if (bnValue && !scannedData.has(bnValue)) {
+          const now = new Date().toLocaleString("zh-TW", {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+          });
+          
+          scannedData.set(bnValue, now);
+          appendToList(bnValue, now);
+          saveToStorage();
+          
+          // 更新狀態指示
+          document.getElementById("scan-status").textContent = `已掃描: ${bnValue}`;
+          document.getElementById("scan-status").style.color = "#28a745";
+          
+          // 短暫顯示後恢復
+          setTimeout(() => {
+            if (scanActive) {
+              document.getElementById("scan-status").textContent = "掃描中...";
+              document.getElementById("scan-status").style.color = "#666";
+            }
+          }, 1500);
+        }
+      } catch (e) {
+        console.error("解析 QR Code 失敗：", qrMessage);
+      }
+    }, 100);
+
+    // 開始掃描 (優化版)
+    async function startScan() {
+      if (html5QrCode && scanActive) return;
+      
+      document.getElementById("scan-status").textContent = "正在啟動相機...";
+      document.getElementById("scan-status").style.color = "#666";
+      
+      try {
+        html5QrCode = new Html5Qrcode("reader");
+        
+        const config = {
+          fps: 25, // 提高幀率
+          qrbox: { width: 220, height: 220 }, // 優化掃描區域大小
+          aspectRatio: 1.0, // 固定寬高比
+          disableFlip: true, // 禁用圖像翻轉檢測
+          focusMode: "continuous" // 自動對焦
+        };
+        
+        await html5QrCode.start(
+          { facingMode: "environment" },
+          config,
+          onScanSuccess,
+          (error) => {
+            console.warn("掃描質量警告:", error);
+          }
+        );
+        
+        scanActive = true;
+        document.getElementById("scan-status").textContent = "掃描中...";
+        document.getElementById("scan-status").style.color = "#666";
+      } catch (err) {
+        console.error("啟動掃描失敗：", err);
+        document.getElementById("scan-status").textContent = "掃描啟動失敗: " + err.message;
+        document.getElementById("scan-status").style.color = "#dc3545";
+      }
+    }
+
+    // 停止掃描
+    async function stopScan() {
+      if (html5QrCode && scanActive) {
+        try {
+          await html5QrCode.stop();
+          html5QrCode.clear();
+          scanActive = false;
+          document.getElementById("scan-status").textContent = "掃描已停止";
+          document.getElementById("scan-status").style.color = "#6c757d";
+        } catch (err) {
+          console.error("停止掃描失敗：", err);
+        }
+      }
+    }
+
+    // 下載 CSV
+    function downloadCSV() {
+      if (scannedData.size === 0) {
+        alert("沒有可導出的數據");
+        return;
+      }
+      
+      const csvContent = "data:text/csv;charset=utf-8,\uFEFF車牌號碼,掃描時間\n" +
+        Array.from(scannedData.entries())
+          .map(([bn, time]) => `"${bn}","${time}"`)
+          .join("\n");
+
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `掃描記錄_${new Date().toISOString().slice(0,10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    // 清除數據
+    function clearData() {
+      if (scannedData.size === 0) {
+        alert("沒有可清除的數據");
+        return;
+      }
+      
+      if (confirm("確定要清除所有掃描紀錄？此操作不可撤銷！")) {
+        scannedData.clear();
+        localStorage.removeItem("bnData");
+        document.getElementById("result-list").innerHTML = "";
+      }
+    }
+
+    // 頁面加載時初始化
+    document.addEventListener('DOMContentLoaded', () => {
+      loadFromStorage();
+      
+      // 自動聚焦開始按鈕
+      document.querySelector('button').focus();
+      
+      // 添加鍵盤快捷鍵支持
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 's' && !scanActive) startScan();
+        if (e.key === 't' && scanActive) stopScan();
+      });
+    });
+
+    // 頁面卸載時停止掃描
+    window.addEventListener('beforeunload', () => {
+      if (scanActive) {
+        stopScan();
+      }
+    });
+  </script>
+</body>
+</html>
