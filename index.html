@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <title>QR Code Scanner</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 1em;
+      margin: 0;
+      background: #f9f9f9;
+    }
+
+    h1 {
+      font-size: 1.5em;
+      text-align: center;
+    }
+
+    button {
+      padding: 10px 20px;
+      margin: 5px;
+      font-size: 1.1em;
+      border-radius: 8px;
+      border: none;
+      background-color: #007bff;
+      color: white;
+    }
+
+    #reader {
+      width: 100%;
+      max-width: 400px;
+      margin: 1em auto;
+    }
+
+    ul {
+      list-style-type: none;
+      padding: 0;
+    }
+
+    li {
+      background: #fff;
+      margin: 4px 0;
+      padding: 8px;
+      border-radius: 6px;
+      font-size: 1em;
+    }
+
+    .btn-group {
+      text-align: center;
+      margin-bottom: 1em;
+    }
+  </style>
+</head>
+<body>
+  <h1>QR Code 掃描器</h1>
+
+  <div class="btn-group">
+    <button onclick="startScan()">▶️ 開始掃描</button>
+    <button onclick="stopScan()">⏹️ 停止掃描</button>
+    <button onclick="downloadCSV()">📥 下載 CSV</button>
+    <button onclick="clearData()">🗑️ 清除紀錄</button>
+  </div>
+
+  <div id="reader"></div>
+
+  <h3>掃描結果：</h3>
+  <ul id="result-list"></ul>
+
+  <script>
+    const scannedData = new Map();
+    let html5QrCode;
+
+    function loadFromStorage() {
+      const stored = JSON.parse(localStorage.getItem("bnData") || "[]");
+      stored.forEach(({ bn, time }) => {
+        scannedData.set(bn, time);
+        appendToList(bn, time);
+      });
+    }
+
+    function saveToStorage() {
+      const data = Array.from(scannedData.entries()).map(([bn, time]) => ({ bn, time }));
+      localStorage.setItem("bnData", JSON.stringify(data));
+    }
+
+    function appendToList(bn, time) {
+      const list = document.getElementById("result-list");
+      const item = document.createElement("li");
+      item.textContent = `${bn} - ${time}`;
+      list.appendChild(item);
+    }
+
+    function onScanSuccess(qrMessage) {
+      try {
+        const url = new URL(qrMessage);
+        const bnValue = url.searchParams.get("bn");
+
+        if (bnValue && !scannedData.has(bnValue)) {
+          const now = new Date().toLocaleString();
+          scannedData.set(bnValue, now);
+          appendToList(bnValue, now);
+          saveToStorage();
+        }
+      } catch (e) {
+        console.error("無法解析 QR Code URL：", qrMessage);
+      }
+    }
+
+    async function startScan() {
+      html5QrCode = new Html5Qrcode("reader");
+      try {
+        await html5QrCode.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          onScanSuccess
+        );
+      } catch (err) {
+        console.error("啟動掃描失敗：", err);
+      }
+    }
+
+    async function stopScan() {
+      if (html5QrCode) {
+        await html5QrCode.stop();
+        html5QrCode.clear();
+      }
+    }
+
+    function downloadCSV() {
+      const csvContent = "data:text/csv;charset=utf-8,BikeNumber,ScannedTime\n"
+        + Array.from(scannedData.entries())
+            .map(([bn, time]) => `${bn},${time}`)
+            .join("\n");
+
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", "bn_codes.csv");
+      document.body.appendChild(link);
+      link.click();
+    }
+
+    function clearData() {
+      if (confirm("確定要清除所有掃描紀錄？")) {
+        scannedData.clear();
+        localStorage.removeItem("bnData");
+        document.getElementById("result-list").innerHTML = "";
+      }
+    }
+
+    loadFromStorage();
+  </script>
+</body>
+</html>
